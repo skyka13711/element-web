@@ -1,5 +1,5 @@
 /*
-Copyright 2020-2022 New Vector Ltd.
+Copyright 2020 New Vector Ltd.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -18,11 +18,8 @@ import { KJUR } from 'jsrsasign';
 import {
     IOpenIDCredentials,
     IWidgetApiRequest,
-    IWidgetApiRequestData,
-    IWidgetApiResponseData,
     VideoConferenceCapabilities,
     WidgetApi,
-    WidgetApiAction,
 } from "matrix-widget-api";
 import { ElementWidgetActions } from "matrix-react-sdk/src/stores/widgets/ElementWidgetActions";
 import { logger } from "matrix-js-sdk/src/logger";
@@ -32,7 +29,7 @@ import { SnakedObject } from "matrix-react-sdk/src/utils/SnakedObject";
 import { getVectorConfig } from "../getconfig";
 
 // We have to trick webpack into loading our CSS for us.
-require("./index.pcss");
+require("./index.scss");
 
 const JITSI_OPENIDTOKEN_JWT_AUTH = 'openidtoken-jwt';
 
@@ -55,13 +52,14 @@ let openIdToken: IOpenIDCredentials;
 let roomName: string;
 let startAudioOnly: boolean;
 let isVideoChannel: boolean;
-let supportsScreensharing: boolean;
 
 let widgetApi: WidgetApi;
 let meetApi: any; // JitsiMeetExternalAPI
 let skipOurWelcomeScreen = false;
 
-const setupCompleted = (async () => {
+const ack = (ev: CustomEvent<IWidgetApiRequest>) => widgetApi.transport.reply(ev.detail, {});
+
+(async function() {
     try {
         // Queue a config.json lookup asap, so we can use it later on. We want this to be concurrent with
         // other setup work and therefore do not block.
@@ -91,88 +89,24 @@ const setupCompleted = (async () => {
         }
 
         // Set this up as early as possible because Element will be hitting it almost immediately.
-        let widgetApiReady: Promise<void>;
+        let readyPromise: Promise<[void, void]>;
         if (parentUrl && widgetId) {
             const parentOrigin = new URL(qsParam('parentUrl')).origin;
             widgetApi = new WidgetApi(qsParam("widgetId"), parentOrigin);
-
-            widgetApiReady = new Promise<void>(resolve => widgetApi.once("ready", resolve));
             widgetApi.requestCapabilities(VideoConferenceCapabilities);
+            readyPromise = Promise.all([
+                new Promise<void>(resolve => {
+                    widgetApi.once(`action:${ElementWidgetActions.ClientReady}`, ev => {
+                        ev.preventDefault();
+                        resolve();
+                        widgetApi.transport.reply(ev.detail, {});
+                    });
+                }),
+                new Promise<void>(resolve => {
+                    widgetApi.once("ready", () => resolve());
+                }),
+            ]);
             widgetApi.start();
-
-            const handleAction = (
-                action: WidgetApiAction,
-                handler: (request: IWidgetApiRequestData) => void,
-            ): void => {
-                widgetApi.on(`action:${action}`, async (ev: CustomEvent<IWidgetApiRequest>) => {
-                    ev.preventDefault();
-                    await setupCompleted;
-
-                    let response: IWidgetApiResponseData;
-                    try {
-                        await handler(ev.detail.data);
-                        response = {};
-                    } catch (e) {
-                        if (e instanceof Error) {
-                            response = { error: { message: e.message } };
-                        } else {
-                            throw e;
-                        }
-                    }
-
-                    await widgetApi.transport.reply(ev.detail, response);
-                });
-            };
-
-            handleAction(ElementWidgetActions.JoinCall, async ({ audioInput, videoInput }) => {
-                joinConference(audioInput as string | null, videoInput as string | null);
-            });
-            handleAction(ElementWidgetActions.HangupCall, async ({ force }) => {
-                if (force === true) {
-                    meetApi?.dispose();
-                    notifyHangup();
-                    meetApi = null;
-                    closeConference();
-                } else {
-                    meetApi?.executeCommand('hangup');
-                }
-            });
-            handleAction(ElementWidgetActions.MuteAudio, async () => {
-                if (meetApi && !await meetApi.isAudioMuted()) {
-                    meetApi.executeCommand('toggleAudio');
-                }
-            });
-            handleAction(ElementWidgetActions.UnmuteAudio, async () => {
-                if (meetApi && await meetApi.isAudioMuted()) {
-                    meetApi.executeCommand('toggleAudio');
-                }
-            });
-            handleAction(ElementWidgetActions.MuteVideo, async () => {
-                if (meetApi && !await meetApi.isVideoMuted()) {
-                    meetApi.executeCommand('toggleVideo');
-                }
-            });
-            handleAction(ElementWidgetActions.UnmuteVideo, async () => {
-                if (meetApi && await meetApi.isVideoMuted()) {
-                    meetApi.executeCommand('toggleVideo');
-                }
-            });
-            handleAction(ElementWidgetActions.TileLayout, async () => {
-                meetApi?.executeCommand('setTileView', true);
-            });
-            handleAction(ElementWidgetActions.SpotlightLayout, async () => {
-                meetApi?.executeCommand('setTileView', false);
-            });
-            handleAction(ElementWidgetActions.StartLiveStream, async ({ rtmpStreamKey }) => {
-                if (!meetApi) throw new Error("Conference not joined");
-                meetApi.executeCommand('startRecording', {
-                    mode: 'stream',
-                    // this looks like it should be rtmpStreamKey but we may be on too old
-                    // a version of jitsi meet
-                    //rtmpStreamKey,
-                    youtubeStreamKey: rtmpStreamKey,
-                });
-            });
         } else {
             logger.warn("No parent URL or no widget ID - assuming no widget API is available");
         }
@@ -188,7 +122,6 @@ const setupCompleted = (async () => {
         roomName = qsParam('roomName', true);
         startAudioOnly = qsParam('isAudioOnly', true) === "true";
         isVideoChannel = qsParam('isVideoChannel', true) === "true";
-        supportsScreensharing = qsParam('supportsScreensharing', true) === "true";
 
         // We've reached the point where we have to wait for the config, so do that then parse it.
         const instanceConfig = new SnakedObject<IConfigOptions>((await configPromise) ?? <IConfigOptions>{});
@@ -201,7 +134,7 @@ const setupCompleted = (async () => {
         toggleConferenceVisibility(skipOurWelcomeScreen);
 
         if (widgetApi) {
-            await widgetApiReady;
+            await readyPromise;
 
             // See https://github.com/matrix-org/prosody-mod-auth-matrix-user-verification
             if (jitsiAuth === JITSI_OPENIDTOKEN_JWT_AUTH) {
@@ -209,6 +142,99 @@ const setupCompleted = (async () => {
                 openIdToken = await widgetApi.requestOpenIDConnectToken();
                 logger.log("Got OpenID Connect token");
             }
+
+            widgetApi.on(`action:${ElementWidgetActions.JoinCall}`,
+                (ev: CustomEvent<IWidgetApiRequest>) => {
+                    ev.preventDefault();
+                    const { audioDevice, videoDevice } = ev.detail.data;
+                    joinConference(audioDevice as string | null, videoDevice as string | null);
+                    ack(ev);
+                },
+            );
+            widgetApi.on(`action:${ElementWidgetActions.HangupCall}`,
+                (ev: CustomEvent<IWidgetApiRequest>) => {
+                    ev.preventDefault();
+                    meetApi?.executeCommand('hangup');
+                    ack(ev);
+                },
+            );
+            widgetApi.on(`action:${ElementWidgetActions.ForceHangupCall}`,
+                (ev: CustomEvent<IWidgetApiRequest>) => {
+                    ev.preventDefault();
+                    meetApi?.dispose();
+                    notifyHangup();
+                    meetApi = null;
+                    closeConference();
+                    ack(ev);
+                },
+            );
+            widgetApi.on(`action:${ElementWidgetActions.MuteAudio}`,
+                async (ev: CustomEvent<IWidgetApiRequest>) => {
+                    ev.preventDefault();
+                    if (meetApi && !await meetApi.isAudioMuted()) {
+                        meetApi.executeCommand('toggleAudio');
+                    }
+                    ack(ev);
+                },
+            );
+            widgetApi.on(`action:${ElementWidgetActions.UnmuteAudio}`,
+                async (ev: CustomEvent<IWidgetApiRequest>) => {
+                    ev.preventDefault();
+                    if (meetApi && await meetApi.isAudioMuted()) {
+                        meetApi.executeCommand('toggleAudio');
+                    }
+                    ack(ev);
+                },
+            );
+            widgetApi.on(`action:${ElementWidgetActions.MuteVideo}`,
+                async (ev: CustomEvent<IWidgetApiRequest>) => {
+                    ev.preventDefault();
+                    if (meetApi && !await meetApi.isVideoMuted()) {
+                        meetApi.executeCommand('toggleVideo');
+                    }
+                    ack(ev);
+                },
+            );
+            widgetApi.on(`action:${ElementWidgetActions.UnmuteVideo}`,
+                async (ev: CustomEvent<IWidgetApiRequest>) => {
+                    ev.preventDefault();
+                    if (meetApi && await meetApi.isVideoMuted()) {
+                        meetApi.executeCommand('toggleVideo');
+                    }
+                    ack(ev);
+                },
+            );
+            widgetApi.on(`action:${ElementWidgetActions.TileLayout}`,
+                (ev: CustomEvent<IWidgetApiRequest>) => {
+                    ev.preventDefault();
+                    meetApi?.executeCommand('setTileView', true);
+                    ack(ev);
+                },
+            );
+            widgetApi.on(`action:${ElementWidgetActions.SpotlightLayout}`,
+                (ev: CustomEvent<IWidgetApiRequest>) => {
+                    ev.preventDefault();
+                    meetApi?.executeCommand('setTileView', false);
+                    ack(ev);
+                },
+            );
+            widgetApi.on(`action:${ElementWidgetActions.StartLiveStream}`,
+                (ev: CustomEvent<IWidgetApiRequest>) => {
+                    ev.preventDefault();
+                    if (meetApi) {
+                        meetApi.executeCommand('startRecording', {
+                            mode: 'stream',
+                            // this looks like it should be rtmpStreamKey but we may be on too old
+                            // a version of jitsi meet
+                            //rtmpStreamKey: ev.detail.data.rtmpStreamKey,
+                            youtubeStreamKey: ev.detail.data.rtmpStreamKey,
+                        });
+                        ack(ev);
+                    } else {
+                        widgetApi.transport.reply(ev.detail, { error: { message: "Conference not joined" } });
+                    }
+                },
+            );
         }
 
         // Now that everything should be set up, skip to the Jitsi splash screen if needed
@@ -217,6 +243,13 @@ const setupCompleted = (async () => {
         }
 
         enableJoinButton(); // always enable the button
+
+        // Inform the client that we're ready to receive events
+        try {
+            await widgetApi?.transport.send(ElementWidgetActions.WidgetReady, {});
+        } catch (e) {
+            logger.error(e);
+        }
     } catch (e) {
         logger.error("Error setting up Jitsi widget", e);
         document.getElementById("widgetActionContainer").innerText = "Failed to load Jitsi widget";
@@ -311,11 +344,11 @@ function closeConference() {
 }
 
 // event handler bound in HTML
-// An audio input of undefined instructs Jitsi to start unmuted with whatever
-// audio input it can find, while an input of null instructs it to start muted,
-// and a non-nullish input specifies the label of a specific device to use.
-// Same for video inputs.
-function joinConference(audioInput?: string | null, videoInput?: string | null) {
+// An audio device of undefined instructs Jitsi to start unmuted with whatever
+// audio device it can find, while a device of null instructs it to start muted,
+// and a non-nullish device specifies the label of a specific device to use.
+// Same for video devices.
+function joinConference(audioDevice?: string | null, videoDevice?: string | null) {
     let jwt;
     if (jitsiAuth === JITSI_OPENIDTOKEN_JWT_AUTH) {
         if (!openIdToken?.access_token) { // eslint-disable-line camelcase
@@ -341,8 +374,8 @@ function joinConference(audioInput?: string | null, videoInput?: string | null) 
         parentNode: document.querySelector("#jitsiContainer"),
         roomName: conferenceId,
         devices: {
-            audioInput,
-            videoInput,
+            audioInput: audioDevice,
+            videoInput: videoDevice,
         },
         userInfo: {
             displayName,
@@ -357,8 +390,8 @@ function joinConference(audioInput?: string | null, videoInput?: string | null) 
         configOverwrite: {
             subject: roomName,
             startAudioOnly,
-            startWithAudioMuted: audioInput === null,
-            startWithVideoMuted: videoInput === null,
+            startWithAudioMuted: audioDevice === null,
+            startWithVideoMuted: videoDevice === null,
             // Request some log levels for inclusion in rageshakes
             // Ideally we would capture all possible log levels, but this can
             // cause Jitsi Meet to try to post various circular data structures
@@ -375,18 +408,11 @@ function joinConference(audioInput?: string | null, videoInput?: string | null) 
         // deployments that have it enabled
         options.configOverwrite.prejoinConfig = { enabled: false };
         // Use a simplified set of toolbar buttons
-        options.configOverwrite.toolbarButtons = ["microphone", "camera", "tileview", "hangup"];
-        // Note: We can hide the screenshare button in video rooms but not in
-        // normal conference calls, since in video rooms we control exactly what
-        // set of controls appear, but in normal calls we need to leave that up
-        // to the deployment's configuration.
-        // https://github.com/vector-im/element-web/issues/4880#issuecomment-940002464
-        if (supportsScreensharing) options.configOverwrite.toolbarButtons.splice(2, 0, "desktop");
+        options.configOverwrite.toolbarButtons = [
+            "microphone", "camera", "desktop", "tileview", "hangup",
+        ];
         // Hide all top bar elements
         options.configOverwrite.conferenceInfo = { autoHide: [] };
-        // Remove the ability to hide your own tile, since we're hiding the
-        // settings button which would be the only way to get it back
-        options.configOverwrite.disableSelfViewSettings = true;
     }
 
     meetApi = new JitsiMeetExternalAPI(jitsiDomain, options);

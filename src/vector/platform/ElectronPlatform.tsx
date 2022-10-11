@@ -175,7 +175,9 @@ export default class ElectronPlatform extends VectorBasePlatform {
      * Return true if platform supports multi-language
      * spell-checking, otherwise false.
      */
-    public supportsSpellCheckSettings(): boolean {
+    public supportsMultiLanguageSpellCheck(): boolean {
+        // Electron uses OS spell checking on macOS, so no need for in-app options
+        if (isMac) return false;
         return true;
     }
 
@@ -234,10 +236,6 @@ export default class ElectronPlatform extends VectorBasePlatform {
 
     public loudNotification(ev: MatrixEvent, room: Room) {
         electron.send('loudNotification');
-    }
-
-    public needsUrlTooltips(): boolean {
-        return true;
     }
 
     public async getAppVersion(): Promise<string> {
@@ -303,18 +301,7 @@ export default class ElectronPlatform extends VectorBasePlatform {
         return this.ipc.call('setLanguage', preferredLangs);
     }
 
-    public setSpellCheckEnabled(enabled: boolean): void {
-        this.ipc.call('setSpellCheckEnabled', enabled).catch(error => {
-            logger.log("Failed to send setSpellCheckEnabled IPC to Electron");
-            logger.error(error);
-        });
-    }
-
-    public async getSpellCheckEnabled(): Promise<boolean> {
-        return this.ipc.call('getSpellCheckEnabled');
-    }
-
-    public setSpellCheckLanguages(preferredLangs: string[]): void {
+    public setSpellCheckLanguages(preferredLangs: string[]) {
         this.ipc.call('setSpellCheckLanguages', preferredLangs).catch(error => {
             logger.log("Failed to send setSpellCheckLanguages IPC to Electron");
             logger.error(error);
@@ -331,11 +318,6 @@ export default class ElectronPlatform extends VectorBasePlatform {
 
     public supportsDesktopCapturer(): boolean {
         return true;
-    }
-
-    public supportsJitsiScreensharing(): boolean {
-        // See https://github.com/vector-im/element-web/issues/4880
-        return false;
     }
 
     public async getAvailableSpellCheckLanguages(): Promise<string[]> {

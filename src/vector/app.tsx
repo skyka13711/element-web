@@ -30,7 +30,7 @@ import * as Lifecycle from "matrix-react-sdk/src/Lifecycle";
 import SdkConfig, { parseSsoRedirectOptions } from "matrix-react-sdk/src/SdkConfig";
 import { IConfigOptions } from "matrix-react-sdk/src/IConfigOptions";
 import { logger } from "matrix-js-sdk/src/logger";
-import { createClient } from "matrix-js-sdk/src/matrix";
+import { createClient, IndexedDBCryptoStore, IndexedDBStore } from "matrix-js-sdk/src/matrix";
 import { SnakedObject } from "matrix-react-sdk/src/utils/SnakedObject";
 import MatrixChat from "matrix-react-sdk/src/components/structures/MatrixChat";
 
@@ -116,14 +116,25 @@ export async function loadApp(fragParams: {}) {
     let autoRedirect = ssoRedirects.immediate === true;
     // XXX: This path matching is a bit brittle, but better to do it early instead of in the app code.
     const isWelcomeOrLanding = window.location.hash === '#/welcome' || window.location.hash === '#';
+    console.log('CLIENT CREATE')
     if (!autoRedirect && ssoRedirects.on_welcome_page && isWelcomeOrLanding) {
         autoRedirect = true;
     }
     if (!hasPossibleToken && !isReturningFromSso && autoRedirect) {
         logger.log("Bypassing app load to redirect to SSO");
+        const store = new IndexedDBStore({
+            indexedDB: window.indexedDB,
+            dbName: 'zuggat-cache',
+            localStorage: window.localStorage,
+        });
+        const cryptoStore = new IndexedDBCryptoStore(
+            indexedDB, 'zuggat:crypto',
+        );
         const tempCli = createClient({
             baseUrl: config.validated_server_config.hsUrl,
             idBaseUrl: config.validated_server_config.isUrl,
+            store,
+            cryptoStore,
         });
         PlatformPeg.get().startSingleSignOn(tempCli, "sso", `/${getScreenFromLocation(window.location).screen}`);
 

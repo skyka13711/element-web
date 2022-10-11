@@ -41,7 +41,7 @@ function routeUrl(location: Location) {
     (window.matrixChat as MatrixChatType).showScreen(s.screen, s.params);
 }
 
-function onHashChange() {
+function onHashChange(ev: HashChangeEvent) {
     if (decodeURIComponent(window.location.hash) === lastLocationHashSet) {
         // we just set this: no need to route it!
         return;

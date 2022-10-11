@@ -47,8 +47,7 @@ export default abstract class VectorBasePlatform extends BasePlatform {
         if (this._favicon) {
             return this._favicon;
         }
-        this._favicon = new Favicon();
-        return this._favicon;
+        return this._favicon = new Favicon();
     }
 
     private updateFavicon() {

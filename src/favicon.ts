@@ -54,7 +54,7 @@ export default class Favicon {
 
     private isReady = false;
     // callback to run once isReady is asserted, allows for a badge to be queued for when it can be shown
-    private readyCb?: () => void;
+    private readyCb = () => {};
 
     constructor(params: Partial<IParams> = {}) {
         this.params = { ...defaults, ...params };
@@ -84,19 +84,12 @@ export default class Favicon {
         }
     }
 
-    private reset(): void {
+    private reset() {
         this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
         this.context.drawImage(this.baseImage, 0, 0, this.canvas.width, this.canvas.height);
     }
 
-    private options(n: number | string, params: IParams): {
-        n: string | number;
-        len: number;
-        x: number;
-        y: number;
-        w: number;
-        h: number;
-    } {
+    private options(n: number | string, params: IParams) {
         const opt = {
             n: ((typeof n) === "number") ? Math.abs(n as number | 0) : n,
             len: ("" + n).length,
@@ -131,7 +124,7 @@ export default class Favicon {
         return opt;
     }
 
-    private circle(n: number | string, opts?: Partial<IParams>): void {
+    private circle(n: number | string, opts?: Partial<IParams>) {
         const params = { ...this.params, ...opts };
         const opt = this.options(n, params);
 
@@ -184,19 +177,19 @@ export default class Favicon {
         this.context.closePath();
     }
 
-    private ready(): void {
+    private ready() {
         if (this.isReady) return;
         this.isReady = true;
-        this.readyCb?.();
+        this.readyCb();
     }
 
-    private setIcon(canvas: HTMLCanvasElement): void {
+    private setIcon(canvas) {
         setImmediate(() => {
             this.setIconSrc(canvas.toDataURL("image/png"));
         });
     }
 
-    private setIconSrc(url: string): void {
+    private setIconSrc(url) {
         // if is attached to fav icon
         if (this.browser.ff || this.browser.opera) {
             // for FF we need to "recreate" element, attach to dom and remove old <link>
@@ -207,7 +200,9 @@ export default class Favicon {
             newIcon.setAttribute("type", "image/png");
             window.document.getElementsByTagName("head")[0].appendChild(newIcon);
             newIcon.setAttribute("href", url);
-            old.parentNode?.removeChild(old);
+            if (old.parentNode) {
+                old.parentNode.removeChild(old);
+            }
         } else {
             this.icons.forEach(icon => {
                 icon.setAttribute("href", url);
@@ -215,7 +210,7 @@ export default class Favicon {
         }
     }
 
-    public badge(content: number | string, opts?: Partial<IParams>): void {
+    public badge(content: number | string, opts?: Partial<IParams>) {
         if (!this.isReady) {
             this.readyCb = () => {
                 this.badge(content, opts);
@@ -232,18 +227,18 @@ export default class Favicon {
         this.setIcon(this.canvas);
     }
 
-    private static getLinks(): HTMLLinkElement[] {
+    private static getLinks() {
         const icons: HTMLLinkElement[] = [];
         const links = window.document.getElementsByTagName("head")[0].getElementsByTagName("link");
-        for (const link of links) {
-            if ((/(^|\s)icon(\s|$)/i).test(link.getAttribute("rel"))) {
-                icons.push(link);
+        for (let i = 0; i < links.length; i++) {
+            if ((/(^|\s)icon(\s|$)/i).test(links[i].getAttribute("rel"))) {
+                icons.push(links[i]);
             }
         }
         return icons;
     }
 
-    private static getIcons(): HTMLLinkElement[] {
+    private static getIcons() {
         // get favicon link elements
         let elms = Favicon.getLinks();
         if (elms.length === 0) {
